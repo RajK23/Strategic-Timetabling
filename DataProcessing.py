@@ -5,7 +5,7 @@ import operator
 from collections import defaultdict
 
 script_dir = os.path.dirname(__file__)
-relpath = 'CCT/ITC2007/comp06.xml'
+relpath = 'CCT/ITC2007/comp05.xml'
 absFilePath = os.path.join(script_dir, relpath)
 
 tree = ET.parse(absFilePath)
@@ -30,7 +30,7 @@ S = {0}
 
 PeriodConstraints = defaultdict(list)
 delta = 25
-deltaMode = True
+deltaMode = False
 
 #DATA ANALYSIS
 for child in root:
@@ -49,22 +49,28 @@ for child in root:
             id = attribs['id']
             tc = attribs['teacher']
 
+            dbl = attribs['double_lectures']
+
             Courses.append(id)
             MND[id] = int(attribs['min_days'])
             DEM[id] = int(attribs['students'])
             T[tc].append(id)
+            
+            # if dbl == "yes":
+            #     L[id] = int(attribs['lectures']) * 1.2
+            # else:
             L[id] = int(attribs['lectures'])
 
         elif tag == "room":
             id = attribs['id']
 
             Rooms.append(id)
-            # if not deltaMode:
-            CAP[id] = int(attribs['size'])
-            S.add(int(attribs['size']))
-            # else:
-                # CAP[id] = math.ceil(int(attribs['size']) / 25) * 25
-                # S.add(CAP[id])
+            if not deltaMode:
+                CAP[id] = int(attribs['size'])
+                S.add(int(attribs['size']))
+            else:
+                CAP[id] = math.ceil(int(attribs['size']) / 25) * 25
+                S.add(CAP[id])
 
         elif tag == "curriculum":
             id = attribs['id']
@@ -111,6 +117,98 @@ RGT = {s : [r for r in Rooms if CAP[r] >= s] for s in S}
 # print()
 
 
+def RoomPlanningAndQual():
+    
+    # 4b
+    S = [math.ceil(DEM[c]/25)*25 for c in DEM]
+    S = set(S).union({0})
+    SGT = {s : [ss for ss in S if ss > s] for s in S}
+    CGT = {s : [c for c in Courses if DEM[c] > s] for s in S}
+    RGT = {s : [r for r in Rooms if CAP[r] > s] for s in S}
+
+    m  = Model()
+    # Room Planning Variables
+    R = {s : m.addVar(vtype= GRB.INTEGER) for s in S}
+    # Quality Variables
+    X = {(c, p) : m.addVar(vtype = GRB.BINARY) for c in Courses for p in P}
+    W = {(c) : m.addVar() for c in Courses}
+    Z = {(c, d) : m.addVar(vtype = GRB.BINARY) for c in Courses for d in range(len(D))}
+    Q = {(cu, p) : m.addVar(vtype = GRB.BINARY) for cu in Curricula for p in P}
+    V = {(cu, p) : m.addVar(vtype = GRB.BINARY) for cu in Curricula for p in P}
+
+
+    # 4a
+    fSeats  = quicksum(s * R[s] for s in S)
+    # 4b
+    fQual = quicksum(5 * W[c] for c in Courses) + quicksum(2 * V[cu,p] for cu in Curricula for p in P)
+    
+
+    #4c 4d
+    Connecting = {(s, p): m.addConstr(quicksum(X[c, p] for c in CGT[s])  <= quicksum(R[ss] for ss in SGT[s])) for s in S for p in P}
+
+    # 4e
+    # 1c
+    AllLecPlanned = {c : m.addConstr(quicksum(X[c, p] for p in P) == L[c]) for c in Courses}
+
+    # 1d
+    SetOnDayVariable = {(c, d) : m.addConstr(quicksum(X[c, p] for p in D[d]) - Z[c, d] >= 0) for c in Courses for d in range(len(D))}
+
+    # 1e
+    MinimumDayPenalty  = {(c) : m.addConstr(quicksum(Z[c, d] for d in range(len(D))) + W[c] >= MND[c]) for c in Courses}
+
+    # 1f
+    CurriculaPressure = {(cu, p) : m.addConstr(quicksum(X[c, p] for c in Curricula[cu]) - Q[cu, p]  == 0) for cu in Curricula for p in P}
+
+    # 1g Calculates Compactness
+    g1 = {(cu,p):  m.addConstr(-Q[cu, p-1] + Q[cu,p] - Q[cu, p+1] - V[cu, p] <= 0) for (cu, p) in Q if (cu, p-1) in Q and (cu, p+1) in Q}
+    g2 = {(cu,p):  m.addConstr(Q[cu,p] - Q[cu, p+1] - V[cu, p] <= 0) for (cu, p) in Q if (cu, p-1)  not in Q}
+    g3= {(cu,p):  m.addConstr(-Q[cu, p-1] + Q[cu,p]  - V[cu, p] <= 0) for (cu, p) in Q if (cu, p+1) not in Q}
+
+    # 1h
+    TeacherPeriods = {(t, p): m.addConstr(quicksum(X[c, p] for c in T[t]) <= 1) for t in T for p in P}
+
+    # 4f
+    SetCovering = {s :  m.addConstr(len(P) * quicksum(R[ss]  for ss in SGT[s]) >= quicksum(L[c] for c in CGT[s])) for s in S}
+
+    m.setObjective(fSeats)
+    m.optimize()
+    
+    m.setObjective(fQual)
+    m.optimize()
+
+
+def LinearTimeRoomPlanningProblem():
+    RoomSizes = [math.ceil(DEM[c]/25)*25 for c in DEM]
+    RoomSizes = sorted(set(RoomSizes), reverse=True)
+    print(RoomSizes)
+    B = sorted([(DEM[c], L[c], c) for c in L], reverse=True)
+    print(len(P))
+    i = 0;
+    remainingTimeslots = 0;
+    
+    rooms = []
+
+    for dem, lectures, c in B:
+        # print(dem, lectures, c)
+
+        if (remainingTimeslots >= lectures):
+            remainingTimeslots -= lectures
+        else:
+            remaining =  lectures - remainingTimeslots
+
+            while (i < len(RoomSizes) - 1 and dem <= RoomSizes[i + 1]):
+                i = i+1;    
+                
+            remainingTimeslots = len(P) - remaining 
+            rooms.append(RoomSizes[i])
+    print(rooms)
+    print(sum(rooms))
+    # 150 = (130, 6, 'c0001'), (117, 7, 'c0004'), (75, 6, 'c0002'), (75, 3, 'c0005'), (65, 8, 'c0015')
+    # 75 = (65, 7, 'c0016'), (65, 2, 'c0017'), (65, 1, 'c0014'), (55, 8, 'c0025'), (55, 5, 'c0078'), (55, 4, 'c0024'), (31, 3, 'c0033')
+    # 50 = (31, 3, 'c0033') (31, 1, 'c0032'), (20, 5, 'c0030'), (14, 6, 'c0066'), (11, 5, 'c0031'),(10, 6, 'c0071'), (10, 4, 'c0062')
+    # 25 = (10, 1, 'c0062') (9, 6, 'c0072'), (9, 6, 'c0068'), (8, 6, 'c0063'), (7, 6, 'c0069'), (7, 6, 'c0059')
+# print(Curricula)
+
 def QualityProblem() :
     Quality = Model()
     X = {(c, p) : Quality.addVar(vtype = GRB.BINARY) for c in Courses for p in P}
@@ -138,13 +236,25 @@ def QualityProblem() :
     #Teacher can
     h = {(t, p): Quality.addConstr(quicksum(X[c, p] for c in T[t]) <= 1) for t in T for p in P}
 
+
+
     Quality.optimize();
 
+    for (c, d) in Z:
+        if Z[c, d].x > 0.9:
+            print(f'Course {c} is on day {d}')
+
+    # for (c, p) in X:
+    #     if X[c, p].x > 0.9:
+    #         print(f'Course {c} has been scheduled in Timeslot {p}')
+
 def TimeslotConstraint(model, X):
+    print(PeriodConstraints)
     for course in PeriodConstraints:
-        for day, period in PeriodConstraints[course]:
-            con = day*Days + period + 1
-            model.addConstr(X[course, con] == 0) 
+        model.addConstr( quicksum(X[course, day*Days + period + 1]  for day, period in PeriodConstraints[course]) ==1)
+        # for day, period in PeriodConstraints[course]:
+        #     con = day*Days + period + 1
+        #     model.addConstr(X[course, con] == 0) 
 
 def RoomPlanningProblem() :
     # need to implement the linear version of this algorithm maybe in the future
@@ -153,8 +263,7 @@ def RoomPlanningProblem() :
     RPP.setObjective(quicksum(s * R[s] for s in S))
     SetCovering = {s :  RPP.addConstr(len(P) * quicksum(R[ss]  for ss in SGT[s]) >= quicksum(L[c] for c in CGT[s])) for s in S}
     
-    A ={s : RPP.addConstr(R[s] == sum(1 for r in Rooms if CAP[r] == s)) for s in S}
-
+    A = {s : RPP.addConstr(R[s] == sum(1 for r in Rooms if CAP[r] == s)) for s in S}
     RPP.optimize();
 
     for s in S:
@@ -165,31 +274,25 @@ def TeachingPeriodsProblem() :
     # Teaching Periods Problem
     TPP = Model()
     TP = {p : TPP.addVar(vtype = GRB.BINARY) for p in P}
+    print(sum(L[c] for c in L))
 
     TPP.setObjective(quicksum(TP[p] for p in P), GRB.MINIMIZE)
-    # TPP.addConstr(len(Rooms) * quicksum(TP[p] for p in TP) >= sum(L[c] for c in Courses))
-    #SetCovering = {s: TPP.addConstr(len(RGT[s])*quicksum(TP[p] for p in P) >= quicksum(L[c] for c in CGT[s])) for s in S}
-    
-    # TPP.addConstr(len(Rooms) * quicksum(TP[p] for p in TP) >= sum(L[c] for c in Courses))
-    for s in S:
-        if s <= 30:
-            TPP.addConstr((len(RGT[s]) - 1 )*quicksum(TP[p] for p in P) >= quicksum(L[c] for c in CGT[s]))        
-        else:    
-            TPP.addConstr((len(RGT[s])) * len(P)  >= sum(L[c] for c in Courses if DEM[c] >= s))
 
-    # quicksum(TP[p] for p in P)
+    # SetCovering = {s: TPP.addConstr(len(RGT[s])*quicksum(TP[p] for p in P) 
+    #         >= quicksum(L[c] for c in CGT[s])) for s in S}
+    
+    TPP.addConstr(len(Rooms) * quicksum(TP[p] for p in TP) >= sum(L[c] for c in L))
+
     ConsecPeriods = {p: TPP.addConstr((TP[p+1] - TP[p]) <= 0) for p in P if p+1 in P}
     TPP.optimize();
 
-    for s in S:
-        pass
-        #print(s, (len(RGT[s])) ,(len(RGT[s])) * sum(TP[p].x for p in P) ,'>=', sum(L[c] for c in Courses if DEM[c] >= s))
-
-    for p in P:
-        if TP[p].x > 0.9:
-            print("Allocated: " +  str(p))
+    print(sum(L[c] for c in L))
 
 def RoomsPlanningvsQuality():
+    # S = [math.ceil(DEM[c] / 25) * 25 for c in DEM]
+    # SGT = {s : [ss for ss in S if ss >= s] for s in S}
+    # CGT = {s : [c for c in Courses if DEM[c] >= s] for s in S}
+    
     RPQ = Model() 
 
     X = {(c, p) : RPQ.addVar(vtype = GRB.BINARY) for c in Courses for p in P}
@@ -200,12 +303,10 @@ def RoomsPlanningvsQuality():
     R = {s : RPQ.addVar(vtype= GRB.INTEGER) for s in S}
     #R_PLUS = {(s) : RPQ.addVar(vtype = GRB.BINARY) for s in S for p in P}
 
-
-
     fQual = quicksum(5 * W[c] for c in Courses) + quicksum(2 * V[cu,p] for cu in Curricula for p in P)
     fSeats = quicksum(s * R[s] for s in S)
 
-
+    TimeslotConstraint(RPQ, X)
     c4 = {(s, p): RPQ.addConstr(quicksum(X[c, p] for c in CGT[s])  <= quicksum(R[ss] for ss in SGT[s])) for s in S for p in P}
     #4e
     AllLecPlanned = {c : RPQ.addConstr(quicksum(X[c, p] for p in P) == L[c]) for c in Courses}
@@ -232,8 +333,7 @@ def RoomsPlanningvsQuality():
 
 def RoomsPlanningvsTeachingPeriods():
     RPTP = Model ()
-    fTime = quicksum(TP[p] for p in P)
-    fSeats = quicksum(s * R[s] for s in S)
+
     X = {(c, p) : RPTP.addVar(vtype = GRB.BINARY) for c in Courses for p in P}
     Z = {(c, d) : RPTP.addVar(vtype = GRB.BINARY) for c in Courses for d in range(len(D))}
     W = {(c) : RPTP.addVar(vtype = GRB.INTEGER) for c in Courses}
@@ -242,6 +342,9 @@ def RoomsPlanningvsTeachingPeriods():
     R = {s : RPTP.addVar(vtype= GRB.INTEGER) for s in S}
     TP = {p : RPTP.addVar(vtype = GRB.BINARY) for p in P}
 
+
+    fTime = quicksum(TP[p] for p in P)
+    fSeats = quicksum(s * R[s] for s in S)
 
     AllLecPlanned = {c : RPTP.addConstr(quicksum(X[c, p] for p in P) == L[c]) for c in Courses}
     #Must set z to one to be able to plannign a lecture in this class
@@ -264,7 +367,7 @@ def RoomsPlanningvsTeachingPeriods():
     c4 = {(s, p): RPTP.addConstr(quicksum(X[c, p] for c in CGT[s])  <= quicksum(R[ss] for ss in SGT[s])) for s in S for p in P}
     c5 = {(c, p): RPTP.addConstr(X[c, p] - TP[p] <= 0) for c in Courses for p in P}
 
-    BiObjectiveSolver(fTime, fSeats, m, 1);
+    BiObjectiveSolver(fTime, fSeats, RPTP, 1);
 
 def TeachingPeriodsvsQuality():
     TPQ = Model()
@@ -305,8 +408,8 @@ def TeachingPeriodsvsQuality():
     ConsecPeriods = {p: TPQ.addConstr((TP[p] - TP[p-1]) <= 0) for p in P if p != 1}
     # TPQ.setParam('OutputFlag', 0)
     # Look at adding in class constraints.
-    # BiObjectiveSolver(fTime, fQual, TPQ, 1)
-    BoundsSolver(fTime, fQual, TPQ, "TimePeriods", "Quality")
+    BiObjectiveSolver(fTime, fQual, TPQ, 1)
+    #BoundsSolver(fTime, fQual, TPQ, "TimePeriods", "Quality")
 
 def BiObjectiveSolver(fx, fy, m, delta) :
     m.setObjective(fy, GRB.MINIMIZE);
@@ -380,4 +483,4 @@ def BoundsSolver(fx, fy, m, fxString, fyString):
     print("Best " + fyString , bestFy, "|", fxString + " with Best " + fyString, fxWithBestFy)
 
 if __name__ == "__main__":
-    RoomPlanningProblem()
+    TeachingPeriodsProblem()
