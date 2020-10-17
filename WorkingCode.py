@@ -4,7 +4,7 @@ from gurobipy import *
 import operator
 from collections import defaultdict
 import math
-
+import itertools
 
 Days = 5
 MinPPD = -1
@@ -217,10 +217,10 @@ SaveBoundInformation=False
 RoomBoundForEachTimeSlot=False
 FocusOnlyOnBounds=False
 
-def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False) :
+def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmStart=False, TuneGurobiExp = False) :
     UseHallsConditions = True
     UseRoomHallConditions = True
-    TuneGurobi = True
+    TuneGurobi = False
 
     step = 25
     maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
@@ -238,7 +238,7 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False) :
     if (TuneGurobi) :
         m.setParam("BranchDir", 1)
         m.setParam('Heuristics', 0.5)
-        m.setParam('MIPFocus', 1)
+        m.setParam('MIPFocus', 3)
 
 
     R = {(s) : m.addVar(vtype=GRB.INTEGER) for s in S}
@@ -291,16 +291,44 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False) :
     
     fSeats = quicksum(s * R[s] for s in S)
     fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
+    
+    m.setParam('TimeLimit', 300)
+    # m.setObjective(fSeats)
+    # m.optimize()
     for x in R:
         R[x].BranchPriority = 10
 
+    if (WarmStart):
+        print("Conducting warm start")
+        # for s in S:
+        #     R[s].vtype = GRB.CONTINUOUS
+        #     RPlus[s].vtype = GRB.CONTINUOUS
+
+        # for y in Y:
+        #     Y[y].vtype = GRB.CONTINUOUS
+
+        # m.setObjective(fQual)
+        # m.optimize()
+
+        # for s in S:
+        #     R[s].vtype = GRB.INTEGER
+        #     RPlus[s].vtype = GRB.INTEGER
+
+        # for y in Y:
+        #     Y[y].vtype = GRB.BINARY
+        
+        # m.optimize()
+
     if (Bounds):
-        BoundsSolver(fQual, fSeats, m, 'Quality', 'Seats')
+        OptimalObjectiveBoundsSolver(fQual, fSeats, m, 'Quality', 'Seats')
         return;
     
     if (ParetoFront):
         BiObjectiveSolver()
         return;
+    
+    if (TuneGurobiExp):
+        TuneParameterExperimentation(fSeats, fQual, m)
     
 # Currently Broken
 def CCTModelForTimeSlots(output=True) :
@@ -422,9 +450,7 @@ def TimeslotConseq(cu, pi , d) :
     return ret
 
 
-
-
-def BoundsSolver(fx, fy, m, fxString, fyString):    
+def OptimalObjectiveBoundsSolver(fx, fy, m, fxString, fyString):    
     print("Solving For Best " + fxString)
     m.setObjective(fx, GRB.MINIMIZE)
     m.optimize()
@@ -495,13 +521,32 @@ def BiObjectiveSolver(fx, fy, m, delta) :
             break;
 
 def TuneParameterExperimentation(fx, fy, m):
-    pass
+    Params = [(1, 3), (0.3, 0.5, 0.8)]
+    Names = ['MIPFocus' , 'Heuristics']
+    m.setParam('TimeLimit', 420)
+    m.setParam('OutputFlag', 0)
+
+    m.addConstr(fy == 35)
+    m.setObjective(fx)
+    for i in itertools.product(*Params):
+        print("Optimizing : ")
+        for p in range(len(i)):
+            m.setParam(Names[p], i[p])
+            print(Names[p], i[p])
+        m.optimize()
+
+        print("After A max of 10 mins", m.objVal, m.Runtime)
+        m.reset()
+
+
+
+
 
 if __name__ == "__main__":
-    for i in [8]:
+    for i in [2]:
         print(i, end= " ")
         ProcessData(i)
-        CCTModelForRoomPlanning(output=True, Bounds=True)
+        CCTModelForRoomPlanning(output=True, Bounds=True, WarmStart = False, TuneGurobiExp=False)
         print()
 
 # Reducing Room Approximation
