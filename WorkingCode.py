@@ -217,7 +217,7 @@ SaveBoundInformation=False
 RoomBoundForEachTimeSlot=False
 FocusOnlyOnBounds=False
 
-def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmStart=False, TuneGurobiExp = False) :
+def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmStart=False, TuneGurobiExp = False, TimeLimit=GRB.INFINITY) :
     UseHallsConditions = True
     UseRoomHallConditions = True
     TuneGurobi = False
@@ -237,8 +237,8 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
 
     if (TuneGurobi) :
         m.setParam("BranchDir", 1)
-        m.setParam('Heuristics', 0.5)
-        m.setParam('MIPFocus', 3)
+        m.setParam('Heuristics', 0.3)
+        m.setParam('MIPFocus', 1)
 
 
     R = {(s) : m.addVar(vtype=GRB.INTEGER) for s in S}
@@ -292,7 +292,7 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
     fSeats = quicksum(s * R[s] for s in S)
     fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
     
-    m.setParam('TimeLimit', 300)
+    m.setParam('TimeLimit', TimeLimit)
     # m.setObjective(fSeats)
     # m.optimize()
     for x in R:
@@ -329,7 +329,7 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
     
     if (TuneGurobiExp):
         TuneParameterExperimentation(fSeats, fQual, m)
-    
+        return
 # Currently Broken
 def CCTModelForTimeSlots(output=True) :
     global PPD;
@@ -539,14 +539,11 @@ def TuneParameterExperimentation(fx, fy, m):
         m.reset()
 
 
-
-
-
 if __name__ == "__main__":
     for i in [2]:
         print(i, end= " ")
         ProcessData(i)
-        CCTModelForRoomPlanning(output=True, Bounds=True, WarmStart = False, TuneGurobiExp=False)
+        CCTModelForRoomPlanning(output=True, Bounds=True, WarmStart = False, TuneGurobiExp=False, TimeLimit=600)
         print()
 
 # Reducing Room Approximation
