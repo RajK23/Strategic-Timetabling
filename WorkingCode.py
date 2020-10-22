@@ -5,6 +5,12 @@ import operator
 from collections import defaultdict
 import math
 import itertools
+from enum import Enum
+
+class Formulation(Enum):
+    RoomPlanningAndQuality = 1
+    TimeSlotsAndQuality = 2
+    RoomPlanningAndTimePeriods = 3
 
 Days = 5
 MinPPD = -1
@@ -217,12 +223,11 @@ SaveBoundInformation=False
 RoomBoundForEachTimeSlot=False
 FocusOnlyOnBounds=False
 
+
+# Convert this into one function
+
 # Room Planning vs Quality Replicates the Paper
 def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmStart=False, TuneGurobiExp = False, TimeLimit=GRB.INFINITY) :
-    UseHallsConditions = True
-    UseRoomHallConditions = True
-    TuneGurobi = False
-
     step = 25
     maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
     S = [i for i in range(step, maxS + 1, step)]
@@ -591,7 +596,6 @@ def OptimalObjectiveBoundsSolver(fx, fy, m, fxString, fyString):
     print("Best " + fxString , bestFx, "| ", fyString + " with Best " + fxString, fyWithBestFx)
     print("Best " + fyString , bestFy, "|", fxString + " with Best " + fyString, fxWithBestFy)
 
-
 def BiObjectiveSolver(fx, fy, m, delta):
     m.setObjective(fy, GRB.MINIMIZE);
     m.optimize();
@@ -628,7 +632,6 @@ def BiObjectiveSolver(fx, fy, m, delta):
             print(epsilon , "   ", maxX)
             print(fyHat , "   ", minY)
             break;
-
 
 def TuneParameterExperimentation(fx, fy, m):
     Params = [(1, 3), (0.3, 0.5, 0.8), (-1, 0, 1)]
