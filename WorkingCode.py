@@ -324,7 +324,7 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
         return;
     
     if (ParetoFront):
-        BiObjectiveSolver()
+        BiObjectiveSolver(fSeats, fQual, m, 25)
         return;
     
     if (TuneGurobiExp):
@@ -449,7 +449,14 @@ def TimeslotConseq(cu, pi , d) :
 
     return ret
 
+'''
 
+fx: LinExp of First Objective
+fy: LinExp of Second Objective
+m : Gurobi Model with all variables constraints added
+fx : String Name of the First Objective
+fy : String Name of the Second Objective
+'''
 def OptimalObjectiveBoundsSolver(fx, fy, m, fxString, fyString):    
     print("Solving For Best " + fxString)
     m.setObjective(fx, GRB.MINIMIZE)
@@ -484,12 +491,10 @@ def OptimalObjectiveBoundsSolver(fx, fy, m, fxString, fyString):
     print("Best " + fxString , bestFx, "| ", fyString + " with Best " + fxString, fyWithBestFx)
     print("Best " + fyString , bestFy, "|", fxString + " with Best " + fyString, fxWithBestFy)
 
-def BiObjectiveSolver(fx, fy, m, delta) :
+def BiObjectiveSolver(fx, fy, m, delta) 
     m.setObjective(fy, GRB.MINIMIZE);
     m.optimize();
-    m.setParam('OutputFlag', 0)
     minY = m.objVal
-
     TEMP = m.addConstr(fy == minY)    
     m.setObjective(fx, GRB.MINIMIZE)
     m.optimize()
@@ -504,16 +509,19 @@ def BiObjectiveSolver(fx, fy, m, delta) :
     epsilonConstraint = m.addConstr(fx == epsilon)
     m.setObjective(fy)
 
-    print("MIN Y", minY)
-    print("MAX X", maxX)
-    print("EPSILON" , epsilon)
-    while True:
+    print("MIN QUALITY", minY)
+    print("MAX SEATS", maxX)
+    print("epsilon or MIN SEATS" , epsilon)
+    i = 0
+    while True and i < 5:
         m.optimize()
-        fx = epsilon
+        fxHat = epsilon
         fyHat = m.objVal
+        
+        print(fxHat, fyHat)
         epsilon = epsilon + delta
         epsilonConstraint.RHS = epsilon
-        
+        i += 1
         if (epsilon > maxX or fyHat <= minY):
             print("BREAKING")
             print(epsilon , "   ", maxX)
@@ -521,8 +529,8 @@ def BiObjectiveSolver(fx, fy, m, delta) :
             break;
 
 def TuneParameterExperimentation(fx, fy, m):
-    Params = [(1, 3), (0.3, 0.5, 0.8)]
-    Names = ['MIPFocus' , 'Heuristics']
+    Params = [(1, 3), (0.3, 0.5, 0.8), (-1, 0, 1)]
+    Names = ['MIPFocus' , 'Heuristics', 'BranchDir']
     m.setParam('TimeLimit', 420)
     m.setParam('OutputFlag', 0)
 
@@ -540,11 +548,8 @@ def TuneParameterExperimentation(fx, fy, m):
 
 
 if __name__ == "__main__":
-    for i in [2]:
+    for i in [17]:
         print(i, end= " ")
         ProcessData(i)
-        CCTModelForRoomPlanning(output=True, Bounds=True, WarmStart = False, TuneGurobiExp=False, TimeLimit=600)
-        print()
-
-# Reducing Room Approximation
-# 
+        CCTModelForRoomPlanning(output=True, ParetoFront=True, Bounds=False, 
+                WarmStart = False, TuneGurobiExp=False, TimeLimit=600)
