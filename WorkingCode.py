@@ -217,6 +217,7 @@ SaveBoundInformation=False
 RoomBoundForEachTimeSlot=False
 FocusOnlyOnBounds=False
 
+# Room Planning vs Quality Replicates the Paper
 def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmStart=False, TuneGurobiExp = False, TimeLimit=GRB.INFINITY) :
     UseHallsConditions = True
     UseRoomHallConditions = True
@@ -331,15 +332,15 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
         TuneParameterExperimentation(fSeats, fQual, m)
         return
 
-# Currently Broken
+# Time Planning Vs Quality Replicates the Paper
 def CCTModelForTimeSlots(output=True) :
     global PPD;
     global P;
     global D;
-
-    PPD = PPD + 5 ;
+    PPD += 5
     P = range(1, Days * PPD + 1)
     D = [[(j+1) + i*(Days) for i in range(PPD)] for j in range(Days)]
+
 
     UseHallsConditions = True
     UseRoomHallConditions = True
@@ -348,7 +349,7 @@ def CCTModelForTimeSlots(output=True) :
     # step = 25
     # maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
     # S = [i for i in range(step, maxS + 1, step)]
-    # S.remove(0)
+    S.remove(0)
     SGT = {s : [ss for ss in S if ss > s] for s in S}
     CGT = {s : [c for c in Courses if DEM[c] > s] for s in S}
     RGT = {s : [r for r in Rooms if CAP[r] > s] for s in S}
@@ -363,12 +364,12 @@ def CCTModelForTimeSlots(output=True) :
         m.setParam('Heuristics', 0.5)
         m.setParam('MIPFocus', 1)
 
-
-    R = {(s) : m.addVar(vtype=GRB.INTEGER, ub = GRB.INFINITY) for s in S}
+    AmtS = {s : sum(1 for r in Rooms if CAP[r] == s) for s in S }
+    R = {(s) : m.addVar(vtype=GRB.INTEGER, ub=AmtS[s]) for s in S}
     RPlus = {(s) : m.addVar(vtype=GRB.INTEGER) for s in S}
     TimeslotUsed = {p : m.addVar(vtype = GRB.BINARY) for p in P}
 
-    Y = {(c, p): m.addVar(vtype = GRB.BINARY, ub=CalcUB(c, p)) for c in Courses for p in P}
+    Y = {(c, p): m.addVar(vtype = GRB.BINARY) for c in Courses for p in P if p not in PeriodConstraints[c]}
 
     DayInUse = {(c, d) : m.addVar(vtype = GRB.BINARY) for c in Courses for d in range(len(D))}
     DaysBelow = {(c) : m.addVar() for c in Courses}
@@ -378,7 +379,7 @@ def CCTModelForTimeSlots(output=True) :
     MinimumWorkingDaysBelow = m.addVar(lb=0, ub=GRB.INFINITY, obj=0)
     VarCurrCompactViol = m.addVar(lb=0, ub=GRB.INFINITY, obj=0)
 
-    # RoomsAccomodate = {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= len(RGT[s])) for s in S for p in P}
+    RoomsAccomodate = {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= len(RGT[s])) for s in S for p in P}
     
     AllLecPlanned = {c : m.addConstr(quicksum(Y[c, p] for p in P if (c, p) in Y) == L[c]) for c in Courses}
     #Additional Room Cuts
@@ -387,10 +388,8 @@ def CCTModelForTimeSlots(output=True) :
     {(s) :  m.addConstr(quicksum(R[s] for s in SGT[s]) == RPlus[s]) for s in S}
 
     if (UseRoomHallConditions) :
-        # {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
-        pass
+        {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
     if (UseHallsConditions):
-        pass
         {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
         {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
 
@@ -414,7 +413,7 @@ def CCTModelForTimeSlots(output=True) :
     m.addConstr(VarCurrCompactViol == quicksum(CurrAlone[x] for x in CurrAlone))
     
     # fSeats = quicksum(s * R[s] for s in S)
-    fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
+    # fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
     fTime = quicksum(TimeslotUsed[p] for p in P)
     # for x in RPlus:
     #     RPlus[x].BranchPriority = 10
@@ -422,7 +421,8 @@ def CCTModelForTimeSlots(output=True) :
     m.optimize()
 
     if (m.Status == 2):
-        print(m.objVal)      
+        print(m.objVal)   
+        # print ([s for s in S if R[s].x > 0.9])   
     else:
         print("Infeasible or not solved to optimality")       # # COMP 4
 
@@ -433,11 +433,111 @@ def CCTModelForTimeSlots(output=True) :
     # m.setObjective(5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol)
     # m.optimize()
 
+def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False):
+    global PPD;
+    global P;
+    global D;
+    PPD += 5
+    P = range(1, Days * PPD + 1)
+    D = [[(j+1) + i*(Days) for i in range(PPD)] for j in range(Days)]
+
+
+    UseHallsConditions = True
+    UseRoomHallConditions = True
+    TuneGurobi = True
+
+    step = 25
+    maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
+    S = [i for i in range(step, maxS + 1, step)]
+    # S.remove(0)
+    SGT = {s : [ss for ss in S if ss > s] for s in S}
+    CGT = {s : [c for c in Courses if DEM[c] > s] for s in S}
+    RGT = {s : [r for r in Rooms if CAP[r] > s] for s in S}
+
+
+    m = Model()
+    if (not output):
+        m.setParam('OutputFlag', 0)
+
+    if (TuneGurobi) :
+        m.setParam("BranchDir", 1)
+        m.setParam('Heuristics', 0.5)
+        m.setParam('MIPFocus', 1)
+
+    AmtS = {s : sum(1 for r in Rooms if CAP[r] == s) for s in S }
+
+
+    R = {(s) : m.addVar(vtype=GRB.INTEGER, ub=GRB.INFINITY) for s in S}
+    RPlus = {(s) : m.addVar(vtype=GRB.INTEGER) for s in S}
+    TimeslotUsed = {p : m.addVar(vtype = GRB.BINARY) for p in P}
+
+    Y = {(c, p): m.addVar(vtype = GRB.BINARY) for c in Courses for p in P if p not in PeriodConstraints[c]}
+
+    DayInUse = {(c, d) : m.addVar(vtype = GRB.BINARY) for c in Courses for d in range(len(D))}
+    DaysBelow = {(c) : m.addVar() for c in Courses}
+    CurrAlone = {(cu, p) : m.addVar(vtype = GRB.BINARY) for cu in Curricula for p in P}
+    CurrAssigned = {(cu, p) : m.addVar(vtype = GRB.BINARY) for cu in Curricula for p in P}
+    
+    MinimumWorkingDaysBelow = m.addVar(lb=0, ub=GRB.INFINITY, obj=0)
+    VarCurrCompactViol = m.addVar(lb=0, ub=GRB.INFINITY, obj=0)
+
+    # RoomsAccomodate = {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= len(RGT[s])) for s in S for p in P}
+    
+    AllLecPlanned = {c : m.addConstr(quicksum(Y[c, p] for p in P if (c, p) in Y) == L[c]) for c in Courses}
+    #Additional Room Cuts
+    m.addConstr(len(P) * quicksum(R[s] for s in S) >= sum(L[c] for c in Courses))
+
+    {(s) :  m.addConstr(quicksum(R[s] for s in SGT[s]) == RPlus[s]) for s in S}
+
+    if (UseRoomHallConditions) :
+        {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
+    if (UseHallsConditions):
+        {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
+        {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
+
+    # Lecturers
+    TeacherOneCourse = {(t, p): m.addConstr(quicksum(Y[c, p] for c in T[t] if (c, p) in Y) <= 1) for t in T for p in P}
+    
+    {(cu, p) : m.addConstr(quicksum(Y[c, p] for c in Curricula[cu] if (c, p) in Y)  <= 1) for cu in Curricula for p in P}
+    
+    {(c, d) : m.addConstr(quicksum(Y[c, p] for p in D[d] if (c, p) in Y) - DayInUse[c, d] >= 0) for c in Courses for d in range(len(D))}
+    
+    CalculationOfMNDViolation = {(c) : m.addConstr(quicksum(DayInUse[c, d] for d in range(len(D))) + DaysBelow[c] >= MND[c]) for c in Courses}
+
+    {(cu, p) : m.addConstr(CurrAssigned[cu, p] ==  quicksum(Y[c, p] for c in Curricula[cu] if (c, p) in Y)) for cu in Curricula for p in P}
+
+    Compactness = {(cu, D[d][pi]) : m.addConstr(CurrAssigned[cu, D[d][pi]] - quicksum(CurrAssigned[cu, pp] for pp in  TimeslotConseq(cu, pi, d)) <= CurrAlone[cu, D[d][pi]]) for cu in Curricula for d in range(len(D)) for pi in range(len(D[d]))}
+
+    {(p) : m.addConstr(Y[c, p]  - TimeslotUsed[p] <= 0)  for p in P for c in Courses if (c, p) in Y}
+    ConsecPeriods = {p: m.addConstr((TimeslotUsed[p] - TimeslotUsed[p - 1]) <= 0) for p in P if p != 1}
+
+    m.addConstr(MinimumWorkingDaysBelow == quicksum(DaysBelow[c] for c in Courses))
+    m.addConstr(VarCurrCompactViol == quicksum(CurrAlone[x] for x in CurrAlone))
+
+
+    fSeats = quicksum(s * R[s] for s in S)
+    fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
+    fTime = quicksum(TimeslotUsed[p] for p in P)
+
+    m.setObjective(fTime)
+    m.optimize()
+    print("Time",  m.objVal , end=" ")   
+
+    m.addConstr(fTime == m.objVal)   
+    m.setObjective(fSeats)
+    m.optimize()
+    print("Seats with time constrained",  m.objVal , end=" ")   
+    print()
+    if (m.Status == 2):
+        pass
+    else:
+        print("Infeasible or not solved to optimality")       # # COMP 4
+
 def CalcUB(c, p):
     if p in PeriodConstraints[c]:
-        return 1
-    else:
         return 0
+    else:
+        return 1
 
 def TimeslotConseq(cu, pi , d) :
     ret = []
@@ -550,7 +650,11 @@ def TuneParameterExperimentation(fx, fy, m):
 
 
 if __name__ == "__main__":
-    for i in [2]:
+    # a = [32,22,23,20,33,21,22,21,23,21,40,27,19,20,23,19,23,17,23,24,24]
+    for i in range(1,22):
         print(i, end= " ")
+        # print(a[i- 1], end= " ")
         ProcessData(i)
-        CCTModelForTimeSlots()
+        
+        
+        CCTModelForTimeSlotsAndRP(output=False)
