@@ -330,6 +330,7 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
     if (TuneGurobiExp):
         TuneParameterExperimentation(fSeats, fQual, m)
         return
+
 # Currently Broken
 def CCTModelForTimeSlots(output=True) :
     global PPD;
@@ -450,7 +451,6 @@ def TimeslotConseq(cu, pi , d) :
     return ret
 
 '''
-
 fx: LinExp of First Objective
 fy: LinExp of Second Objective
 m : Gurobi Model with all variables constraints added
@@ -491,7 +491,8 @@ def OptimalObjectiveBoundsSolver(fx, fy, m, fxString, fyString):
     print("Best " + fxString , bestFx, "| ", fyString + " with Best " + fxString, fyWithBestFx)
     print("Best " + fyString , bestFy, "|", fxString + " with Best " + fyString, fxWithBestFy)
 
-def BiObjectiveSolver(fx, fy, m, delta) 
+
+def BiObjectiveSolver(fx, fy, m, delta):
     m.setObjective(fy, GRB.MINIMIZE);
     m.optimize();
     minY = m.objVal
@@ -528,6 +529,7 @@ def BiObjectiveSolver(fx, fy, m, delta)
             print(fyHat , "   ", minY)
             break;
 
+
 def TuneParameterExperimentation(fx, fy, m):
     Params = [(1, 3), (0.3, 0.5, 0.8), (-1, 0, 1)]
     Names = ['MIPFocus' , 'Heuristics', 'BranchDir']
@@ -548,8 +550,7 @@ def TuneParameterExperimentation(fx, fy, m):
 
 
 if __name__ == "__main__":
-    for i in [17]:
+    for i in [2]:
         print(i, end= " ")
         ProcessData(i)
-        CCTModelForRoomPlanning(output=True, ParetoFront=True, Bounds=False, 
-                WarmStart = False, TuneGurobiExp=False, TimeLimit=600)
+        CCTModelForTimeSlots()
