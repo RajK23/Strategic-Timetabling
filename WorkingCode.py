@@ -9,11 +9,6 @@ from enum import Enum
 from pylab import *
 
 
-class Formulation(Enum):
-    RoomPlanningAndQuality = 1
-    TimeSlotsAndQuality = 2
-    RoomPlanningAndTimePeriods = 3
-
 Days = 5
 MinPPD = -1
 MaxPPD = -1
@@ -28,25 +23,10 @@ L  = {}
 MND = {} 
 DEM = {}
 CAP = {} 
-S = {0}
-name = ""
+S = {}
+Name = ""
 
 PeriodConstraints = defaultdict(list)
-delta = 25
-deltaMode = False
-UseHallsConditions=True
-UseRoomHallConditions=True 
-UseStageIandII=True 
-TuneGurobi=False
-NSols=1
-ConstraintPenalty=None
-AbortSolverOnZeroPenalty=False
-UseRoomsAsTypes=False
-SaveRelaxations=False
-Seed=60
-SaveBoundInformation=False
-RoomBoundForEachTimeSlot=False
-FocusOnlyOnBounds=False
 
 
 def ProcessData(dataset=1):    
@@ -68,7 +48,7 @@ def ProcessData(dataset=1):
     global CAP  
     global S 
     global PeriodConstraints
-    global name
+    global Name
     
     Days = 5
     MinPPD = -1
@@ -90,7 +70,7 @@ def ProcessData(dataset=1):
 
     script_dir = os.path.dirname(__file__)
     relpath = f'CCT/ITC2007/comp{dataset:0>2}.xml'
-    name = f"comp{dataset:0>2}"
+    Name = f"comp{dataset:0>2}"
     absFilePath = os.path.join(script_dir, relpath)
     tree = ET.parse(absFilePath)
     root = tree.getroot()
@@ -226,25 +206,22 @@ def ActualTimeSlotPresented(output=True):
     else:
         print("Infeasible or not solved to optimality")
 
-
-
-
 # Convert this into one function
 
 # Room Planning vs Quality Replicates the Paper
-def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmStart=False, TuneGurobiExp = False, TimeLimit=GRB.INFINITY) :
-    UseHallsConditions = True
-    UseRoomHallConditions = True
-    TuneGurobi = False
+def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, SaveGraph=False, TimeLimit=GRB.INFINITY, UseStep=True) :
+    global S;
 
-    step = 25
-    maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
-    S = [i for i in range(step, maxS + 1, step)]
-    # S.remove(0)
+    if (UseStep) :
+        step = 25 
+        maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
+        S = [i for i in range(step, maxS + 1, step)]
+    
+    
+    
     SGT = {s : [ss for ss in S if ss > s] for s in S}
     CGT = {s : [c for c in Courses if DEM[c] > s] for s in S}
     RGT = {s : [r for r in Rooms if CAP[r] > s] for s in S}
-
 
     m = Model()
     if (not output):
@@ -343,20 +320,17 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
         TuneParameterExperimentation(fSeats, fQual, m)
         return
 
-# Time Planning Vs Quality Replicates the Paper
+# Time Periods Vs Quality Replicates the Paper
 def CCTModelForTimeSlots(output=True, ParetoFront=False, Bounds=False, TimeLimit=GRB.INFINITY, SaveGraph=False) :
     global PPD;
     global P;
     global D;
+    global S;
+
     PPD += 5
     P = range(1, Days * PPD + 1)
     D = [[(j+1) + i*(Days) for i in range(PPD)] for j in range(Days)]
 
-
-    # step = 25
-    # maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
-    # S = [i for i in range(step, maxS + 1, step)]
-    S.remove(0)
     SGT = {s : [ss for ss in S if ss > s] for s in S}
     CGT = {s : [c for c in Courses if DEM[c] > s] for s in S}
     RGT = {s : [r for r in Rooms if CAP[r] > s] for s in S}
@@ -432,22 +406,20 @@ def CCTModelForTimeSlots(output=True, ParetoFront=False, Bounds=False, TimeLimit
         OptimalObjectiveBoundsSolver(fTime, fQual, m , 'time', "quality")
         return
 
+# Time Periods vs Room Planning
 def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False, TimeLimit=GRB.INFINITY, SaveGraph=False, UseStep=True):
     global PPD;
     global P;
     global D;
+    global S;
     PPD += 5
     P = range(1, Days * PPD + 1)
     D = [[(j+1) + i*(Days) for i in range(PPD)] for j in range(Days)]
-
-
-
     if (UseStep) :
-        step = 25 # 25 is used in the paper
+        step = 25 
         maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
         S = [i for i in range(step, maxS + 1, step)]
     
-    S.remove(0)
     SGT = {s : [ss for ss in S if ss > s] for s in S}
     CGT = {s : [c for c in Courses if DEM[c] > s] for s in S}
     RGT = {s : [r for r in Rooms if CAP[r] > s] for s in S}
@@ -511,6 +483,7 @@ def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False, Time
     m.addConstr(VarCurrCompactViol == quicksum(CurrAlone[x] for x in CurrAlone))
 
 
+
     fSeats = quicksum(s * R[s] for s in S)
     fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
     fTime = quicksum(TimeslotUsed[p] for p in P)
@@ -526,20 +499,9 @@ def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False, Time
         return
 
     if (Bounds) :
-        OptimalObjectiveBoundsSolver(fTime, fSeats, m , 1 "TimeSlots", "RoomPlanning")
+        OptimalObjectiveBoundsSolver(fTime, fSeats, m , 1, "TimeSlots", "RoomPlanning")
+        return
 
-    # m.optimize()
-    # print("Time",  m.objVal , end=" ")   
-
-    # m.addConstr(fTime == m.objVal)   
-    # m.setObjective(fSeats)
-    # m.optimize()
-    # print("Seats with time constrained",  m.objVal , end=" ")   
-    # print()
-    # if (m.Status == 2):
-    #     pass
-    # else:
-    #     print("Infeasible or not solved to optimality")       # # COMP 4
 
 def CalcUB(c, p):
     if p in PeriodConstraints[c]:
@@ -622,7 +584,7 @@ def BiObjectiveSolver(fx, fy, m, delta, fxName, fyName, SaveGraph=True):
     print("epsilon or MIN Y" , epsilon)
     i = 0
     fx = []
-    fyObj= []
+    fyObj = []
     fyLB = []
 
     while True and i < 200:
@@ -643,9 +605,6 @@ def BiObjectiveSolver(fx, fy, m, delta, fxName, fyName, SaveGraph=True):
 
         i += 1;
         if (epsilon > maxX or fyHat <= minY):
-            print("BREAKING")
-            print(epsilon , "   ", maxX)
-            print(fyHat , "   ", minY)
             break;
 
     GraphParetoFront(fx, fyObj, fyLB, fxName, fyName, SaveGraph = SaveGraph)
@@ -684,7 +643,7 @@ def GraphParetoFront(fx, fyObj, fyLB, fxName, fyName, SaveGraph=True):
 
 if __name__ == "__main__":
 
-    for i in range(11, 12):
+    for i in range(1, 2):
         print(i, end= " ")
         ProcessData(i)
-        CCTModelForTimeSlots(output=True, ParetoFront=True, Bounds=False, TimeLimit=360)
+        CCTModelForTimeSlots(output=True, ParetoFront=True, Bounds=True, TimeLimit=360)
