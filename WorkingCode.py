@@ -6,6 +6,8 @@ from collections import defaultdict
 import math
 import itertools
 from enum import Enum
+from pylab import *
+
 
 class Formulation(Enum):
     RoomPlanningAndQuality = 1
@@ -27,10 +29,24 @@ MND = {}
 DEM = {}
 CAP = {} 
 S = {0}
+name = ""
 
 PeriodConstraints = defaultdict(list)
 delta = 25
 deltaMode = False
+UseHallsConditions=True
+UseRoomHallConditions=True 
+UseStageIandII=True 
+TuneGurobi=False
+NSols=1
+ConstraintPenalty=None
+AbortSolverOnZeroPenalty=False
+UseRoomsAsTypes=False
+SaveRelaxations=False
+Seed=60
+SaveBoundInformation=False
+RoomBoundForEachTimeSlot=False
+FocusOnlyOnBounds=False
 
 
 def ProcessData(dataset=1):    
@@ -52,7 +68,7 @@ def ProcessData(dataset=1):
     global CAP  
     global S 
     global PeriodConstraints
-
+    global name
     
     Days = 5
     MinPPD = -1
@@ -74,6 +90,7 @@ def ProcessData(dataset=1):
 
     script_dir = os.path.dirname(__file__)
     relpath = f'CCT/ITC2007/comp{dataset:0>2}.xml'
+    name = f"comp{dataset:0>2}"
     absFilePath = os.path.join(script_dir, relpath)
     tree = ET.parse(absFilePath)
     root = tree.getroot()
@@ -209,25 +226,17 @@ def ActualTimeSlotPresented(output=True):
     else:
         print("Infeasible or not solved to optimality")
 
-UseHallsConditions=True
-UseRoomHallConditions=True 
-UseStageIandII=True 
-TuneGurobi=False
-NSols=1
-ConstraintPenalty=None
-AbortSolverOnZeroPenalty=False
-UseRoomsAsTypes=False
-SaveRelaxations=False
-Seed=60
-SaveBoundInformation=False
-RoomBoundForEachTimeSlot=False
-FocusOnlyOnBounds=False
+
 
 
 # Convert this into one function
 
 # Room Planning vs Quality Replicates the Paper
 def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmStart=False, TuneGurobiExp = False, TimeLimit=GRB.INFINITY) :
+    UseHallsConditions = True
+    UseRoomHallConditions = True
+    TuneGurobi = False
+
     step = 25
     maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
     S = [i for i in range(step, maxS + 1, step)]
@@ -241,10 +250,9 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
     if (not output):
         m.setParam('OutputFlag', 0)
 
-    if (TuneGurobi) :
-        m.setParam("BranchDir", 1)
-        m.setParam('Heuristics', 0.3)
-        m.setParam('MIPFocus', 1)
+    m.setParam("BranchDir", 1)
+    m.setParam('Heuristics', 0.3)
+    m.setParam('MIPFocus', 1)
 
 
     R = {(s) : m.addVar(vtype=GRB.INTEGER) for s in S}
@@ -269,12 +277,10 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
 
     {(s) :  m.addConstr(quicksum(R[s] for s in SGT[s]) == RPlus[s]) for s in S}
 
-    if (UseRoomHallConditions) :
-        {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
+    {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
 
-    if (UseHallsConditions):
-        {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
-        {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
+    {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
+    {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
 
     # Lecturers
     TeacherOneCourse = {(t, p): m.addConstr(quicksum(Y[c, p] for c in T[t] if (c, p) in Y) <= 1) for t in T for p in P}
@@ -330,7 +336,7 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
         return;
     
     if (ParetoFront):
-        BiObjectiveSolver(fSeats, fQual, m, 25)
+        BiObjectiveSolver(fSeats, fQual, m, 25, "RoomPlanning", "Quality")
         return;
     
     if (TuneGurobiExp):
@@ -338,7 +344,7 @@ def CCTModelForRoomPlanning(output=True, ParetoFront=False, Bounds=False, WarmSt
         return
 
 # Time Planning Vs Quality Replicates the Paper
-def CCTModelForTimeSlots(output=True) :
+def CCTModelForTimeSlots(output=True, ParetoFront=False, Bounds=False, TimeLimit=GRB.INFINITY, SaveGraph=False) :
     global PPD;
     global P;
     global D;
@@ -346,10 +352,6 @@ def CCTModelForTimeSlots(output=True) :
     P = range(1, Days * PPD + 1)
     D = [[(j+1) + i*(Days) for i in range(PPD)] for j in range(Days)]
 
-
-    UseHallsConditions = True
-    UseRoomHallConditions = True
-    TuneGurobi = True
 
     # step = 25
     # maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
@@ -364,10 +366,9 @@ def CCTModelForTimeSlots(output=True) :
     if (not output):
         m.setParam('OutputFlag', 0)
 
-    if (TuneGurobi) :
-        m.setParam("BranchDir", 1)
-        m.setParam('Heuristics', 0.5)
-        m.setParam('MIPFocus', 1)
+    m.setParam("BranchDir", 1)
+    m.setParam('Heuristics', 0.5)
+    m.setParam('MIPFocus', 1)
 
     AmtS = {s : sum(1 for r in Rooms if CAP[r] == s) for s in S }
     R = {(s) : m.addVar(vtype=GRB.INTEGER, ub=AmtS[s]) for s in S}
@@ -392,11 +393,9 @@ def CCTModelForTimeSlots(output=True) :
 
     {(s) :  m.addConstr(quicksum(R[s] for s in SGT[s]) == RPlus[s]) for s in S}
 
-    if (UseRoomHallConditions) :
-        {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
-    if (UseHallsConditions):
-        {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
-        {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
+    {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
+    {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
+    {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
 
     # Lecturers
     TeacherOneCourse = {(t, p): m.addConstr(quicksum(Y[c, p] for c in T[t] if (c, p) in Y) <= 1) for t in T for p in P}
@@ -418,27 +417,22 @@ def CCTModelForTimeSlots(output=True) :
     m.addConstr(VarCurrCompactViol == quicksum(CurrAlone[x] for x in CurrAlone))
     
     # fSeats = quicksum(s * R[s] for s in S)
-    # fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
+    fQual = 5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol
     fTime = quicksum(TimeslotUsed[p] for p in P)
-    # for x in RPlus:
-    #     RPlus[x].BranchPriority = 10
-    m.setObjective(fTime)
-    m.optimize()
+    for x in RPlus:
+        RPlus[x].BranchPriority = 10
 
-    if (m.Status == 2):
-        print(m.objVal)   
-        # print ([s for s in S if R[s].x > 0.9])   
-    else:
-        print("Infeasible or not solved to optimality")       # # COMP 4
+    m.setParam("TimeLimit", TimeLimit)
 
-    # y = m.objVal
-    
-    # m.addConstr(quicksum(s * R[s] for s in S) == y)
+    if (ParetoFront) :
+        BiObjectiveSolver(fTime, fQual,m, 1, "Time", "Quality", SaveGraph=SaveGraph)
+        return
 
-    # m.setObjective(5 * MinimumWorkingDaysBelow + 2 * VarCurrCompactViol)
-    # m.optimize()
+    if (Bounds):
+        OptimalObjectiveBoundsSolver(fTime, fQual, m , 'time', "quality")
+        return
 
-def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False):
+def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False, TimeLimit=GRB.INFINITY, SaveGraph=False, UseStep=True):
     global PPD;
     global P;
     global D;
@@ -447,14 +441,13 @@ def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False):
     D = [[(j+1) + i*(Days) for i in range(PPD)] for j in range(Days)]
 
 
-    UseHallsConditions = True
-    UseRoomHallConditions = True
-    TuneGurobi = True
 
-    step = 25
-    maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
-    S = [i for i in range(step, maxS + 1, step)]
-    # S.remove(0)
+    if (UseStep) :
+        step = 25 # 25 is used in the paper
+        maxS = max([math.ceil(DEM[c] / step) * step for c in DEM])
+        S = [i for i in range(step, maxS + 1, step)]
+    
+    S.remove(0)
     SGT = {s : [ss for ss in S if ss > s] for s in S}
     CGT = {s : [c for c in Courses if DEM[c] > s] for s in S}
     RGT = {s : [r for r in Rooms if CAP[r] > s] for s in S}
@@ -464,10 +457,10 @@ def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False):
     if (not output):
         m.setParam('OutputFlag', 0)
 
-    if (TuneGurobi) :
-        m.setParam("BranchDir", 1)
-        m.setParam('Heuristics', 0.5)
-        m.setParam('MIPFocus', 1)
+
+    m.setParam("BranchDir", 1)
+    m.setParam('Heuristics', 0.5)
+    m.setParam('MIPFocus', 1)
 
     AmtS = {s : sum(1 for r in Rooms if CAP[r] == s) for s in S }
 
@@ -494,11 +487,9 @@ def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False):
 
     {(s) :  m.addConstr(quicksum(R[s] for s in SGT[s]) == RPlus[s]) for s in S}
 
-    if (UseRoomHallConditions) :
-        {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
-    if (UseHallsConditions):
-        {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
-        {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
+    {(s) : m.addConstr(RPlus[s] * len(P) >= sum(L[c] for c in CGT[s])) for s in S}
+    {p : m.addConstr(quicksum(Y[c, p] for c in Courses if (c, p) in Y) <= quicksum(R[s] for s in S)) for p in P}
+    {(s, p) : m.addConstr(quicksum(Y[c, p] for c in CGT[s] if (c, p) in Y) <= RPlus[s]) for p in P for s in S}
 
     # Lecturers
     TeacherOneCourse = {(t, p): m.addConstr(quicksum(Y[c, p] for c in T[t] if (c, p) in Y) <= 1) for t in T for p in P}
@@ -525,18 +516,30 @@ def CCTModelForTimeSlotsAndRP(output=True, ParetoFront=False, Bounds=False):
     fTime = quicksum(TimeslotUsed[p] for p in P)
 
     m.setObjective(fTime)
-    m.optimize()
-    print("Time",  m.objVal , end=" ")   
+    for x in R:
+        R[x].BranchPriority = 10
 
-    m.addConstr(fTime == m.objVal)   
-    m.setObjective(fSeats)
-    m.optimize()
-    print("Seats with time constrained",  m.objVal , end=" ")   
-    print()
-    if (m.Status == 2):
-        pass
-    else:
-        print("Infeasible or not solved to optimality")       # # COMP 4
+    m.setParam('TimeLimit', TimeLimit)
+
+    if (ParetoFront) :
+        BiObjectiveSolver(fTime, fSeats, m, 1, "Timeslots", "RoomPlanning")
+        return
+
+    if (Bounds) :
+        OptimalObjectiveBoundsSolver(fTime, fSeats, m , 1 "TimeSlots", "RoomPlanning")
+
+    # m.optimize()
+    # print("Time",  m.objVal , end=" ")   
+
+    # m.addConstr(fTime == m.objVal)   
+    # m.setObjective(fSeats)
+    # m.optimize()
+    # print("Seats with time constrained",  m.objVal , end=" ")   
+    # print()
+    # if (m.Status == 2):
+    #     pass
+    # else:
+    #     print("Infeasible or not solved to optimality")       # # COMP 4
 
 def CalcUB(c, p):
     if p in PeriodConstraints[c]:
@@ -596,7 +599,7 @@ def OptimalObjectiveBoundsSolver(fx, fy, m, fxString, fyString):
     print("Best " + fxString , bestFx, "| ", fyString + " with Best " + fxString, fyWithBestFx)
     print("Best " + fyString , bestFy, "|", fxString + " with Best " + fyString, fxWithBestFy)
 
-def BiObjectiveSolver(fx, fy, m, delta):
+def BiObjectiveSolver(fx, fy, m, delta, fxName, fyName, SaveGraph=True):
     m.setObjective(fy, GRB.MINIMIZE);
     m.optimize();
     minY = m.objVal
@@ -614,24 +617,38 @@ def BiObjectiveSolver(fx, fy, m, delta):
     epsilonConstraint = m.addConstr(fx == epsilon)
     m.setObjective(fy)
 
-    print("MIN QUALITY", minY)
-    print("MAX SEATS", maxX)
-    print("epsilon or MIN SEATS" , epsilon)
+    print("MIN X", minY)
+    print("MAX Y", maxX)
+    print("epsilon or MIN Y" , epsilon)
     i = 0
-    while True and i < 5:
+    fx = []
+    fyObj= []
+    fyLB = []
+
+    while True and i < 200:
         m.optimize()
         fxHat = epsilon
         fyHat = m.objVal
+        fyHatLB = m.ObjBound
+
         
-        print(fxHat, fyHat)
+        if (len(fyObj) == 0 or  fyObj[-1] != fyHat):
+            fx.append(fxHat)
+            fyObj.append(fyHat)
+            fyLB.append(fyHatLB)
+
+
         epsilon = epsilon + delta
         epsilonConstraint.RHS = epsilon
-        i += 1
+
+        i += 1;
         if (epsilon > maxX or fyHat <= minY):
             print("BREAKING")
             print(epsilon , "   ", maxX)
             print(fyHat , "   ", minY)
             break;
+
+    GraphParetoFront(fx, fyObj, fyLB, fxName, fyName, SaveGraph = SaveGraph)
 
 def TuneParameterExperimentation(fx, fy, m):
     Params = [(1, 3), (0.3, 0.5, 0.8), (-1, 0, 1)]
@@ -650,14 +667,24 @@ def TuneParameterExperimentation(fx, fy, m):
 
         print("After A max of 10 mins", m.objVal, m.Runtime)
         m.reset()
+    
+def GraphParetoFront(fx, fyObj, fyLB, fxName, fyName, SaveGraph=True):
+    print(fx)
+    print(fyObj)
+    print(fyLB) 
+    plot(fx, fyObj, 'rx-', markersize=10)
+    plot(fx, fyLB, 'ro--',mfc='none', markersize=10)
 
+    if (SaveGraph):
+        savefig(f"{name}{fxName}{fyName}.png")
+    else:
+        show()
+
+    close()
 
 if __name__ == "__main__":
-    # a = [32,22,23,20,33,21,22,21,23,21,40,27,19,20,23,19,23,17,23,24,24]
-    for i in range(1,22):
+
+    for i in range(11, 12):
         print(i, end= " ")
-        # print(a[i- 1], end= " ")
         ProcessData(i)
-        
-        
-        CCTModelForTimeSlotsAndRP(output=False)
+        CCTModelForTimeSlots(output=True, ParetoFront=True, Bounds=False, TimeLimit=360)
